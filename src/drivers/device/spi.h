@@ -50,11 +50,7 @@ namespace device __EXPORT
 /**
  * Abstract class for character device on SPI
  */
-#ifdef __PX4_NUTTX
 class __EXPORT SPI : public CDev
-#else
-class __EXPORT SPI : public VDev
-#endif
 {
 protected:
 	/**
@@ -71,7 +67,7 @@ protected:
 	SPI(const char *name,
 	    const char *devname,
 	    int bus,
-	    enum spi_dev_e device,
+	    uint32_t device,
 	    enum spi_mode_e mode,
 	    uint32_t frequency,
 	    int irq = 0);
@@ -138,7 +134,7 @@ protected:
 	LockMode	locking_mode;	/**< selected locking mode */
 
 private:
-	enum spi_dev_e		_device;
+	uint32_t			_device;
 	enum spi_mode_e		_mode;
 	uint32_t		_frequency;
 	struct spi_dev_s	*_dev;

@@ -197,7 +197,7 @@
 #define INT_SRC_M               0x13
 
 /* default values for this device */
-#define LSM303D_ACCEL_DEFAULT_RANGE_G			8
+#define LSM303D_ACCEL_DEFAULT_RANGE_G			16
 #define LSM303D_ACCEL_DEFAULT_RATE			800
 #define LSM303D_ACCEL_DEFAULT_ONCHIP_FILTER_FREQ	50
 #define LSM303D_ACCEL_DEFAULT_DRIVER_FILTER_FREQ	30
@@ -230,7 +230,7 @@ class LSM303D_mag;
 class LSM303D : public device::SPI
 {
 public:
-	LSM303D(int bus, const char *path, spi_dev_e device, enum Rotation rotation);
+	LSM303D(int bus, const char *path, uint32_t device, enum Rotation rotation);
 	virtual ~LSM303D();
 
 	virtual int		init();
@@ -544,7 +544,7 @@ private:
 };
 
 
-LSM303D::LSM303D(int bus, const char *path, spi_dev_e device, enum Rotation rotation) :
+LSM303D::LSM303D(int bus, const char *path, uint32_t device, enum Rotation rotation) :
 	SPI("LSM303D", path, bus, device, SPIDEV_MODE3,
 	    11 * 1000 * 1000 /* will be rounded to 10.4 MHz, within safety margins for LSM303D */),
 	_mag(new LSM303D_mag(this)),
@@ -583,17 +583,11 @@ LSM303D::LSM303D(int bus, const char *path, spi_dev_e device, enum Rotation rota
 	_last_temperature(0),
 	_checked_next(0)
 {
-
-
-	// enable debug() calls
-	_debug_enabled = true;
-
 	_device_id.devid_s.devtype = DRV_ACC_DEVTYPE_LSM303D;
 
 	/* Prime _mag with parents devid. */
 	_mag->_device_id.devid = _device_id.devid;
 	_mag->_device_id.devid_s.devtype = DRV_MAG_DEVTYPE_LSM303D;
-
 
 	// default scale factors
 	_accel_scale.x_offset = 0.0f;
@@ -1127,31 +1121,6 @@ LSM303D::accel_self_test()
 		return 1;
 	}
 
-	/* inspect accel offsets */
-	if (fabsf(_accel_scale.x_offset) < 0.000001f) {
-		return 1;
-	}
-
-	if (fabsf(_accel_scale.x_scale - 1.0f) > 0.4f || fabsf(_accel_scale.x_scale - 1.0f) < 0.000001f) {
-		return 1;
-	}
-
-	if (fabsf(_accel_scale.y_offset) < 0.000001f) {
-		return 1;
-	}
-
-	if (fabsf(_accel_scale.y_scale - 1.0f) > 0.4f || fabsf(_accel_scale.y_scale - 1.0f) < 0.000001f) {
-		return 1;
-	}
-
-	if (fabsf(_accel_scale.z_offset) < 0.000001f) {
-		return 1;
-	}
-
-	if (fabsf(_accel_scale.z_scale - 1.0f) > 0.4f || fabsf(_accel_scale.z_scale - 1.0f) < 0.000001f) {
-		return 1;
-	}
-
 	return 0;
 }
 
@@ -1642,6 +1611,9 @@ LSM303D::measure()
 	accel_report.scaling = _accel_range_scale;
 	accel_report.range_m_s2 = _accel_range_m_s2;
 
+	/* return device ID */
+	accel_report.device_id = _device_id.devid;
+
 	_accel_reports->force(&accel_report);
 
 	/* notify anyone waiting for data */
@@ -1675,8 +1647,7 @@ LSM303D::mag_measure()
 	} raw_mag_report;
 #pragma pack(pop)
 
-	mag_report mag_report;
-	memset(&mag_report, 0, sizeof(mag_report));
+	mag_report mag_report {};
 
 	/* start the performance counter */
 	perf_begin(_mag_sample_perf);
@@ -1702,6 +1673,7 @@ LSM303D::mag_measure()
 	 */
 
 	mag_report.timestamp = hrt_absolute_time();
+	mag_report.is_external = is_external();
 
 	mag_report.x_raw = raw_mag_report.x;
 	mag_report.y_raw = raw_mag_report.y;
@@ -1726,6 +1698,7 @@ LSM303D::mag_measure()
 	 */
 	_last_temperature = 25 + (raw_mag_report.temperature * 0.125f);
 	mag_report.temperature = _last_temperature;
+	mag_report.device_id = _mag->_device_id.devid;
 
 	_mag_reports->force(&mag_report);
 
@@ -1940,13 +1913,13 @@ start(bool external_bus, enum Rotation rotation, unsigned range)
 	/* create the driver */
 	if (external_bus) {
 #if defined(PX4_SPI_BUS_EXT) && defined(PX4_SPIDEV_EXT_ACCEL_MAG)
-		g_dev = new LSM303D(PX4_SPI_BUS_EXT, LSM303D_DEVICE_PATH_ACCEL, (spi_dev_e)PX4_SPIDEV_EXT_ACCEL_MAG, rotation);
+		g_dev = new LSM303D(PX4_SPI_BUS_EXT, LSM303D_DEVICE_PATH_ACCEL, PX4_SPIDEV_EXT_ACCEL_MAG, rotation);
 #else
 		errx(0, "External SPI not available");
 #endif
 
 	} else {
-		g_dev = new LSM303D(PX4_SPI_BUS_SENSORS, LSM303D_DEVICE_PATH_ACCEL, (spi_dev_e)PX4_SPIDEV_ACCEL_MAG, rotation);
+		g_dev = new LSM303D(PX4_SPI_BUS_SENSORS, LSM303D_DEVICE_PATH_ACCEL, PX4_SPIDEV_ACCEL_MAG, rotation);
 	}
 
 	if (g_dev == nullptr) {

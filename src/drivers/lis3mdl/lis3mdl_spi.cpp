@@ -58,9 +58,6 @@
 #include "lis3mdl.h"
 #include "board_config.h"
 
-#undef DEVICE_DEBUG
-#define DEVICE_DEBUG printf
-
 #ifdef PX4_SPIDEV_LIS
 
 /* SPI protocol address bits */
@@ -73,7 +70,7 @@ device::Device *LIS3MDL_SPI_interface(int bus);
 class LIS3MDL_SPI : public device::SPI
 {
 public:
-	LIS3MDL_SPI(int bus, spi_dev_e device);
+	LIS3MDL_SPI(int bus, uint32_t device);
 	virtual ~LIS3MDL_SPI();
 
 	virtual int	init();
@@ -85,10 +82,10 @@ public:
 device::Device *
 LIS3MDL_SPI_interface(int bus)
 {
-	return new LIS3MDL_SPI(bus, (spi_dev_e)PX4_SPIDEV_LIS);
+	return new LIS3MDL_SPI(bus, PX4_SPIDEV_LIS);
 }
 
-LIS3MDL_SPI::LIS3MDL_SPI(int bus, spi_dev_e device) :
+LIS3MDL_SPI::LIS3MDL_SPI(int bus, uint32_t device) :
 	SPI("LIS3MDL_SPI", nullptr, bus, device, SPIDEV_MODE3, 11 * 1000 * 1000 /* will be rounded to 10.4 MHz */)
 {
 	_device_id.devid_s.devtype = DRV_MAG_DEVTYPE_LIS3MDL;

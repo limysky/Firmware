@@ -1,122 +1,119 @@
-px4_nuttx_generate_builtin_commands(
-	OUT builtin_commands.c
-	MODULE_LIST
-		${module_libraries}
-		${config_extra_builtin_cmds}
-	)
+include(common/px4_upload)
 
 # add executable
-add_executable(firmware_nuttx
-	builtin_commands.c)
+set(fw_name ${CONFIG}.elf)
+add_executable(${fw_name} ${PX4_SOURCE_DIR}/src/platforms/empty.c)
+add_dependencies(${fw_name} git_nuttx nuttx_build)
 
+get_property(module_libraries GLOBAL PROPERTY PX4_LIBRARIES)
 
-set(nuttx_export_dir ${PX4_BINARY_DIR}/${BOARD}/NuttX/nuttx-export)
+# build NuttX
+add_subdirectory(${PX4_SOURCE_DIR}/platforms/nuttx/NuttX ${PX4_BINARY_DIR}/NuttX)
 
-set(link_libs
-	romfs apps nuttx m gcc
-	)
-
-if(NOT ${BOARD} STREQUAL "sim")
-	list(APPEND link_libs nosys)
-	set(main_link_flags
-		"-T${nuttx_export_dir}/build/ld.script"
-		"-Wl,-Map=${PX4_BINARY_DIR}/${BOARD}/main.map"
-		)
-	px4_join(OUT main_link_flags LIST ${main_link_flags} GLUE " ")
-	set_target_properties(firmware_nuttx PROPERTIES LINK_FLAGS ${main_link_flags})
-endif()
-
-target_link_libraries(firmware_nuttx
+target_link_libraries(${fw_name}
+	-T${PX4_BINARY_DIR}/NuttX/nuttx/configs/${BOARD}/scripts/ld.script
+	-Wl,-Map=${PX4_BINARY_DIR}/${CONFIG}.map
+	-Wl,--warn-common
+	-Wl,--gc-sections
 	-Wl,--start-group
 	${module_libraries}
-	${df_driver_libs}
-	${config_extra_libs}
-	${link_libs}
-	-Wl,--end-group)
+	nuttx_apps
+	nuttx_arch
+	nuttx_binfmt
+	nuttx_binfmt
+	nuttx_c
+	nuttx_configs
+	nuttx_cxx
+	nuttx_drivers
+	nuttx_fs
+	nuttx_mm
+	nuttx_sched
+	-Wl,--end-group
+	m
+	gcc
+	)
 
+if (config_romfs_root)
+	add_subdirectory(${PX4_SOURCE_DIR}/ROMFS ${PX4_BINARY_DIR}/ROMFS)
+	target_link_libraries(${fw_name} romfs)
+	if (config_io_board)
+		add_dependencies(romfs copy_px4io_bin)
+	endif()
+endif()
+
+# create px4 file (combined firmware and metadata)
+set(fw_file ${PX4_BINARY_DIR}/${BOARD}_${LABEL}.px4)
+
+add_custom_command(OUTPUT ${BOARD}.bin
+	COMMAND ${OBJCOPY} -O binary ${PX4_BINARY_DIR}/${fw_name} ${BOARD}.bin
+	DEPENDS ${fw_name}
+	)
+
+if (TARGET parameters_xml AND TARGET airframes_xml)
+	add_custom_command(OUTPUT ${fw_file}
+		COMMAND ${PYTHON_EXECUTABLE} ${PX4_SOURCE_DIR}/Tools/px_mkfw.py
+			--prototype ${PX4_SOURCE_DIR}/Images/${BOARD}.prototype
+			--git_identity ${PX4_SOURCE_DIR}
+			--parameter_xml ${PX4_BINARY_DIR}/parameters.xml
+			--airframe_xml ${PX4_BINARY_DIR}/airframes.xml
+			--image ${BOARD}.bin > ${fw_file}
+		DEPENDS ${BOARD}.bin parameters_xml airframes_xml
+		COMMENT "Creating ${fw_file}"
+		)
+
+	add_custom_target(px4 ALL DEPENDS ${fw_file})
+
+	# upload helper
+	if (${BOARD} STREQUAL "aerofc-v1")
+		px4_add_upload_aero(OUT upload OS ${OS} BOARD ${BOARD} BUNDLE ${fw_file})
+	else()
+		px4_add_upload(OUT upload OS ${OS} BOARD ${BOARD} BUNDLE ${fw_file})
+	endif()
+endif()
+
+# print size
+add_custom_target(size
+	COMMAND size ${fw_name}
+	DEPENDS ${fw_name}
+	WORKING_DIRECTORY ${PX4_BINARY_DIR}
+	)
+
+# print weak symbols
 add_custom_target(check_weak
-	COMMAND ${NM} firmware_nuttx | ${GREP} " w " | cat
-	DEPENDS firmware_nuttx
+	COMMAND ${NM} ${fw_name} | ${GREP} " w " | cat
+	DEPENDS ${fw_name}
 	VERBATIM
 	)
 
-if(NOT ${BOARD} STREQUAL "sim")
+# debugger helpers
+configure_file(gdbinit.in .gdbinit)
 
-	if (config_io_board)
-		set(extras "${PX4_BINARY_DIR}/src/modules/px4iofirmware/${config_io_board}.bin")
-	endif()
+add_custom_target(debug
+	COMMAND ${GDB} $<TARGET_FILE:${fw_name}>
+	DEPENDS ${fw_name} ${CMAKE_CURRENT_BINARY_DIR}/.gdbinit
+	)
 
-	set(romfs_dir "ROMFS/px4fmu_common")
-	if (${BOARD} STREQUAL "tap-v1")
-		set(romfs_dir "ROMFS/tap_common")
-	endif()
-	if (${BOARD} STREQUAL "px4fmu-v2" AND ${LABEL} STREQUAL "test")
-	    set(romfs_dir "ROMFS/px4fmu_test")
-	endif()
+add_custom_target(debug_tui
+	COMMAND ${GDBTUI} $<TARGET_FILE:${fw_name}>
+	DEPENDS ${fw_name} ${CMAKE_CURRENT_BINARY_DIR}/.gdbinit
+	)
 
+add_custom_target(debug_ddd
+	COMMAND ${DDD} --debugger ${GDB} $<TARGET_FILE:${fw_name}>
+	DEPENDS ${fw_name} ${CMAKE_CURRENT_BINARY_DIR}/.gdbinit
+	)
 
-	px4_nuttx_add_romfs(OUT romfs
-		ROOT ${romfs_dir}
-		EXTRAS ${extras}
-		)
-	if (config_io_board)
-	    add_dependencies(romfs fw_io)
-	endif()
+add_custom_target(debug_io
+	COMMAND ${GDB} ${fw_io_path}
+	DEPENDS ${fw_name} ${CMAKE_CURRENT_BINARY_DIR}/.gdbinit
+	)
 
-	set(fw_file ${CMAKE_CURRENT_BINARY_DIR}/${OS}-${BOARD}-${LABEL}.px4)
+add_custom_target(debug_io_tui
+	COMMAND ${GDBTUI} ${fw_io_path}
+	DEPENDS ${fw_name} ${CMAKE_CURRENT_BINARY_DIR}/.gdbinit
+	)
 
-	px4_nuttx_add_firmware(OUT ${fw_file}
-		BOARD ${BOARD}
-		EXE ${CMAKE_CURRENT_BINARY_DIR}/firmware_nuttx
-		PARAM_XML ${PX4_BINARY_DIR}/parameters.xml
-		AIRFRAMES_XML ${PX4_BINARY_DIR}/airframes.xml
-		)
-
-	configure_file(gdbinit.in .gdbinit)
-
-	add_custom_target(debug
-		COMMAND ${GDB} ${CMAKE_CURRENT_BINARY_DIR}/firmware_nuttx
-		DEPENDS firmware_nuttx
-			${CMAKE_CURRENT_BINARY_DIR}/.gdbinit
-		)
-
-	add_custom_target(debug_tui
-		COMMAND ${GDBTUI} ${CMAKE_CURRENT_BINARY_DIR}/firmware_nuttx
-		DEPENDS firmware_nuttx
-			${CMAKE_CURRENT_BINARY_DIR}/.gdbinit
-		)
-
-	add_custom_target(debug_ddd
-		COMMAND ${DDD} --debugger ${GDB} ${CMAKE_CURRENT_BINARY_DIR}/firmware_nuttx
-		DEPENDS firmware_nuttx
-			${CMAKE_CURRENT_BINARY_DIR}/.gdbinit
-		)
-
-	add_custom_target(debug_io
-		COMMAND ${GDB}
-			${PX4_BINARY_DIR}/src/modules/px4iofirmware/${config_io_board}
-		DEPENDS firmware_nuttx
-			${CMAKE_CURRENT_BINARY_DIR}/.gdbinit
-		)
-
-	add_custom_target(debug_io_tui
-		COMMAND ${GDBTUI}
-			${PX4_BINARY_DIR}/src/modules/px4iofirmware/${config_io_board}
-		DEPENDS firmware_nuttx
-			${CMAKE_CURRENT_BINARY_DIR}/.gdbinit
-		)
-
-	add_custom_target(debug_io_ddd
-		COMMAND ${DDD} --debugger ${GDB}
-			${PX4_BINARY_DIR}/src/modules/px4iofirmware/${config_io_board}
-		DEPENDS firmware_nuttx
-			${CMAKE_CURRENT_BINARY_DIR}/.gdbinit
-		)
-
-	px4_add_upload(OUT upload OS ${OS} BOARD ${BOARD}
-		BUNDLE ${fw_file})
-endif()
-
-install(FILES ${fw_file} DESTINATION .)
-
-# vim: set noet ft=cmake fenc=utf-8 ff=unix :
+add_custom_target(debug_io_ddd
+	COMMAND ${DDD} --debugger ${GDB} ${fw_io_path}}
+	DEPENDS ${fw_io} ${CMAKE_CURRENT_BINARY_DIR}/.gdbinit
+	)

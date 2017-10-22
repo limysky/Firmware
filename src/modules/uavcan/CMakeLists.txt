@@ -34,6 +34,10 @@
 set(UAVCAN_USE_CPP03 ON CACHE BOOL "uavcan cpp03")
 set(UAVCAN_PLATFORM stm32 CACHE STRING "uavcan platform")
 
+if(NOT config_uavcan_num_ifaces)
+	message(FATAL_ERROR "config_uavcan_num_ifaces not set")
+endif()
+
 string(TOUPPER "${OS}" OS_UPPER)
 add_definitions(
 		-DUAVCAN_CPP_VERSION=UAVCAN_CPP03
@@ -48,6 +52,7 @@ add_definitions(
 add_subdirectory(libuavcan EXCLUDE_FROM_ALL)
 add_dependencies(uavcan platforms__nuttx)
 
+include_directories(${PX4_SOURCE_DIR}/mavlink/include/mavlink)
 include_directories(libuavcan/libuavcan/include)
 include_directories(libuavcan/libuavcan/include/dsdlc_generated)
 include_directories(libuavcan/libuavcan_drivers/posix/include)
@@ -80,4 +85,4 @@ px4_add_module(
 		uavcan
 	)
 
-## vim: set noet ft=cmake fenc=utf-8 ff=unix :
+target_link_libraries(modules__uavcan uavcan uavcan_stm32_driver)

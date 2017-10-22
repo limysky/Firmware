@@ -61,14 +61,12 @@ namespace device __EXPORT
 {
 
 struct file_t {
-	int fd;
 	int flags;
-	mode_t mode;
 	void *priv;
 	void *vdev;
 
-	file_t() : fd(-1), flags(0), priv(NULL), vdev(NULL) {}
-	file_t(int f, void *c, int d) : fd(d), flags(f), priv(NULL), vdev(c) {}
+	file_t() : flags(0), priv(NULL), vdev(NULL) {}
+	file_t(int f, void *c) : flags(f), priv(NULL), vdev(c) {}
 };
 
 /**
@@ -149,12 +147,12 @@ public:
 	 */
 	struct DeviceStructure {
 		enum DeviceBusType bus_type : 3;
-			uint8_t bus: 5;    // which instance of the bus type
-			uint8_t address;   // address on the bus (eg. I2C address)
-			uint8_t devtype;   // device class specific device type
-		};
+		uint8_t bus: 5;    // which instance of the bus type
+		uint8_t address;   // address on the bus (eg. I2C address)
+		uint8_t devtype;   // device class specific device type
+	};
 
-		union DeviceId {
+	union DeviceId {
 		struct DeviceStructure devid_s;
 		uint32_t devid;
 	};
@@ -209,7 +207,7 @@ private:
 /**
  * Abstract class for any virtual character device
  */
-class __EXPORT VDev : public Device
+class __EXPORT CDev : public Device
 {
 public:
 	/**
@@ -218,12 +216,12 @@ public:
 	 * @param name		Driver name
 	 * @param devname	Device node name
 	 */
-	VDev(const char *name, const char *devname);
+	CDev(const char *name, const char *devname);
 
 	/**
 	 * Destructor
 	 */
-	virtual ~VDev();
+	virtual ~CDev();
 
 	virtual int	init();
 
@@ -322,12 +320,10 @@ public:
 	 */
 	virtual int	ioctl(file_t *filep, int cmd, unsigned long arg);
 
-	static VDev *getDev(const char *path);
+	static CDev *getDev(const char *path);
 	static void showFiles(void);
 	static void showDevices(void);
 	static void showTopics(void);
-	static const char *devList(unsigned int *next);
-	static const char *topicList(unsigned int *next);
 
 	/**
 	 * Get the device name.
@@ -449,8 +445,8 @@ private:
 	int		remove_poll_waiter(px4_pollfd_struct_t *fds);
 
 	/* do not allow copying this class */
-	VDev(const VDev &);
-	//VDev operator=(const VDev&);
+	CDev(const CDev &);
+	//CDev operator=(const CDev&);
 };
 
 #if 0

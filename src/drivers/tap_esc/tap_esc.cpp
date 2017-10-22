@@ -40,6 +40,7 @@
 #include <termios.h>
 #include <cmath>	// NAN
 
+#include <lib/mathlib/mathlib.h>
 #include <systemlib/px4_macros.h>
 #include <drivers/device/device.h>
 #include <uORB/uORB.h>
@@ -49,6 +50,7 @@
 #include <uORB/topics/test_motor.h>
 #include <uORB/topics/input_rc.h>
 #include <uORB/topics/esc_status.h>
+#include <uORB/topics/multirotor_motor_limits.h>
 
 #include <drivers/drv_hrt.h>
 #include <drivers/drv_mixer.h>
@@ -56,15 +58,23 @@
 #include <systemlib/param/param.h>
 #include <systemlib/pwm_limit/pwm_limit.h>
 
+#include "tap_esc_common.h"
+
 #define NAN_VALUE	(0.0f/0.0f)
 
 #ifndef B250000
 #define B250000 250000
 #endif
 
-#define ESC_HAVE_CURRENT_SENSOR
-
 #include "drv_tap_esc.h"
+
+#if !defined(BOARD_TAP_ESC_NO_VERIFY_CONFIG)
+#  define BOARD_TAP_ESC_NO_VERIFY_CONFIG 0
+#endif
+
+#if !defined(BOARD_TAP_ESC_MODE)
+#  define BOARD_TAP_ESC_MODE 0
+#endif
 
 /*
  * This driver connects to TAP ESCs via serial.
@@ -92,11 +102,9 @@ public:
 	virtual int	init();
 	virtual int	ioctl(file *filp, int cmd, unsigned long arg);
 	void cycle();
-protected:
-	void select_responder(uint8_t sel);
+
 private:
 
-	static const uint8_t crcTable[256];
 	static const uint8_t device_mux_map[TAP_ESC_MAX_MOTOR_NUM];
 	static const uint8_t device_dir_map[TAP_ESC_MAX_MOTOR_NUM];
 
@@ -107,12 +115,12 @@ private:
 	// subscriptions
 	int	_armed_sub;
 	int _test_motor_sub;
-	orb_advert_t        	_outputs_pub = nullptr;
+	orb_advert_t        	_outputs_pub;
 	actuator_outputs_s      _outputs;
-	static actuator_armed_s	_armed;
+	actuator_armed_s		_armed;
 
 	//todo:refactor dynamic based on _channels_count
-	// It needs to support the numbe of ESC
+	// It needs to support the number of ESC
 	int	_control_subs[actuator_controls_s::NUM_ACTUATOR_CONTROL_GROUPS];
 
 	pollfd	_poll_fds[actuator_controls_s::NUM_ACTUATOR_CONTROL_GROUPS];
@@ -122,6 +130,7 @@ private:
 	orb_id_t	_control_topics[actuator_controls_s::NUM_ACTUATOR_CONTROL_GROUPS];
 
 	orb_advert_t        _esc_feedback_pub = nullptr;
+	orb_advert_t      _to_mixer_status; 	///< mixer status flags
 	esc_status_s      _esc_feedback;
 	uint8_t           _channels_count; // The number of ESC channels
 
@@ -137,23 +146,19 @@ private:
 
 	void		work_start();
 	void		work_stop();
-	void send_esc_outputs(const float *pwm, const unsigned num_pwm);
+	void send_esc_outputs(const uint16_t *pwm, const unsigned num_pwm);
 	uint8_t crc8_esc(uint8_t *p, uint8_t len);
 	uint8_t crc_packet(EscPacket &p);
 	int send_packet(EscPacket &p, int responder);
 	void read_data_from_uart();
 	bool parse_tap_esc_feedback(ESC_UART_BUF *serial_buf, EscPacket *packetdata);
-	static int control_callback(uintptr_t handle,
-				    uint8_t control_group,
-				    uint8_t control_index,
-				    float &input);
+	static int control_callback_trampoline(uintptr_t handle,
+					       uint8_t control_group, uint8_t control_index, float &input);
+	inline int control_callback(uint8_t control_group, uint8_t control_index, float &input);
 };
 
-const uint8_t TAP_ESC::crcTable[256] = TAP_ESC_CRC;
 const uint8_t TAP_ESC::device_mux_map[TAP_ESC_MAX_MOTOR_NUM] = ESC_POS;
 const uint8_t TAP_ESC::device_dir_map[TAP_ESC_MAX_MOTOR_NUM] = ESC_DIR;
-
-actuator_armed_s TAP_ESC::_armed = {};
 
 namespace
 {
@@ -170,8 +175,9 @@ TAP_ESC::TAP_ESC(int channels_count):
 	_armed_sub(-1),
 	_test_motor_sub(-1),
 	_outputs_pub(nullptr),
-	_control_subs{ -1},
+	_armed{},
 	_esc_feedback_pub(nullptr),
+	_to_mixer_status(nullptr),
 	_esc_feedback{},
 	_channels_count(channels_count),
 	_mixers(nullptr),
@@ -192,6 +198,10 @@ TAP_ESC::TAP_ESC(int channels_count):
 	uartbuf.tail = 0;
 	uartbuf.dat_cnt = 0;
 	memset(uartbuf.esc_feedback_buf, 0, sizeof(uartbuf.esc_feedback_buf));
+
+	for (int i = 0; i < actuator_controls_s::NUM_ACTUATOR_CONTROL_GROUPS; ++i) {
+		_control_subs[i] = -1;
+	}
 
 	for (size_t i = 0; i < sizeof(_outputs.output) / sizeof(_outputs.output[0]); i++) {
 		_outputs.output[i] = NAN;
@@ -229,7 +239,7 @@ TAP_ESC::init()
 
 	ASSERT(!_initialized);
 
-	/* Respect boot time requierd by the ESC FW */
+	/* Respect boot time required by the ESC FW */
 
 	hrt_abstime uptime_us = hrt_absolute_time();
 
@@ -243,6 +253,8 @@ TAP_ESC::init()
 	ConfigInfoBasicRequest   &config = packet.d.reqConfigInfoBasic;
 	memset(&config, 0, sizeof(ConfigInfoBasicRequest));
 	config.maxChannelInUse = _channels_count;
+	/* Enable closed-loop control if supported by the board */
+	config.controlMode = BOARD_TAP_ESC_MODE;
 
 	/* Asign the id's to the ESCs to match the mux */
 
@@ -261,6 +273,8 @@ TAP_ESC::init()
 	if (ret < 0) {
 		return ret;
 	}
+
+#if !BOARD_TAP_ESC_NO_VERIFY_CONFIG
 
 	/* Verify All ESC got the config */
 
@@ -304,7 +318,10 @@ TAP_ESC::init()
 		if (!valid) {
 			return -EIO;
 		}
+
 	}
+
+#endif
 
 	/* To Unlock the ESC from the Power up state we need to issue 10
 	 * ESCBUS_MSG_ID_RUN request with all the values 0;
@@ -340,7 +357,7 @@ int TAP_ESC::send_packet(EscPacket &packet, int responder)
 			return -EINVAL;
 		}
 
-		select_responder(responder);
+		tap_esc_common::select_responder(responder);
 	}
 
 	int packet_len = crc_packet(packet);
@@ -369,11 +386,11 @@ TAP_ESC::subscribe()
 
 		if (unsub_groups & (1 << i)) {
 			DEVICE_DEBUG("unsubscribe from actuator_controls_%d", i);
-			::close(_control_subs[i]);
+			orb_unsubscribe(_control_subs[i]);
 			_control_subs[i] = -1;
 		}
 
-		if (_control_subs[i] > 0) {
+		if (_control_subs[i] >= 0) {
 			_poll_fds[_poll_fds_num].fd = _control_subs[i];
 			_poll_fds[_poll_fds_num].events = POLLIN;
 			_poll_fds_num++;
@@ -386,7 +403,7 @@ uint8_t TAP_ESC::crc8_esc(uint8_t *p, uint8_t len)
 	uint8_t crc = 0;
 
 	for (uint8_t i = 0; i < len; i++) {
-		crc = crcTable[crc^*p++];
+		crc = tap_esc_common::crc_table[crc^*p++];
 	}
 
 	return crc;
@@ -398,17 +415,8 @@ uint8_t TAP_ESC::crc_packet(EscPacket &p)
 	p.d.bytes[p.len] = crc8_esc(&p.len, p.len + 2);
 	return p.len + offsetof(EscPacket, d) + 1;
 }
-void TAP_ESC::select_responder(uint8_t sel)
-{
-#if defined(GPIO_S0)
-	px4_arch_gpiowrite(GPIO_S0, sel & 1);
-	px4_arch_gpiowrite(GPIO_S1, sel & 2);
-	px4_arch_gpiowrite(GPIO_S2, sel & 4);
-#endif
-}
 
-
-void TAP_ESC:: send_esc_outputs(const float *pwm, const unsigned num_pwm)
+void TAP_ESC::send_esc_outputs(const uint16_t *pwm, const unsigned num_pwm)
 {
 
 	uint16_t rpm[TAP_ESC_MAX_MOTOR_NUM];
@@ -466,7 +474,7 @@ void TAP_ESC::read_data_from_uart()
 	}
 }
 
-bool TAP_ESC:: parse_tap_esc_feedback(ESC_UART_BUF *serial_buf, EscPacket *packetdata)
+bool TAP_ESC::parse_tap_esc_feedback(ESC_UART_BUF *serial_buf, EscPacket *packetdata)
 {
 	static PARSR_ESC_STATE state = HEAD;
 	static uint8_t data_index = 0;
@@ -563,7 +571,9 @@ TAP_ESC::cycle()
 		_current_update_rate = 0;
 		/* advertise the mixed control outputs, insist on the first group output */
 		_outputs_pub = orb_advertise(ORB_ID(actuator_outputs), &_outputs);
-		_esc_feedback_pub = orb_advertise(ORB_ID(esc_report), &_esc_feedback);
+		_esc_feedback_pub = orb_advertise(ORB_ID(esc_status), &_esc_feedback);
+		multirotor_motor_limits_s multirotor_motor_limits = {};
+		_to_mixer_status = orb_advertise(ORB_ID(multirotor_motor_limits), &multirotor_motor_limits);
 		_armed_sub = orb_subscribe(ORB_ID(actuator_armed));
 		_test_motor_sub = orb_subscribe(ORB_ID(test_motor));
 		_initialized = true;
@@ -594,7 +604,7 @@ TAP_ESC::cycle()
 		DEVICE_DEBUG("adjusted actuator update interval to %ums", update_rate_in_ms);
 
 		for (unsigned i = 0; i < actuator_controls_s::NUM_ACTUATOR_CONTROL_GROUPS; i++) {
-			if (_control_subs[i] > 0) {
+			if (_control_subs[i] >= 0) {
 				orb_set_interval(_control_subs[i], update_rate_in_ms);
 			}
 		}
@@ -619,7 +629,7 @@ TAP_ESC::cycle()
 		unsigned poll_id = 0;
 
 		for (unsigned i = 0; i < actuator_controls_s::NUM_ACTUATOR_CONTROL_GROUPS; i++) {
-			if (_control_subs[i] > 0) {
+			if (_control_subs[i] >= 0) {
 				if (_poll_fds[poll_id].revents & POLLIN) {
 					orb_copy(_control_topics[i], _control_subs[i], &_controls[i]);
 
@@ -634,11 +644,16 @@ TAP_ESC::cycle()
 		/* can we mix? */
 		if (_is_armed && _mixers != nullptr) {
 
-
 			/* do mixing */
-			num_outputs = _mixers->mix(&_outputs.output[0], num_outputs, NULL);
+			num_outputs = _mixers->mix(&_outputs.output[0], num_outputs);
 			_outputs.noutputs = num_outputs;
 			_outputs.timestamp = hrt_absolute_time();
+
+			/* publish mixer status */
+			multirotor_motor_limits_s multirotor_motor_limits = {};
+			multirotor_motor_limits.saturation_status = _mixers->get_saturation_status();
+
+			orb_publish(ORB_ID(multirotor_motor_limits), _to_mixer_status, &multirotor_motor_limits);
 
 			/* disable unused ports by setting their output to NaN */
 			for (size_t i = num_outputs; i < sizeof(_outputs.output) / sizeof(_outputs.output[0]); i++) {
@@ -648,16 +663,15 @@ TAP_ESC::cycle()
 			/* iterate actuators */
 			for (unsigned i = 0; i < num_outputs; i++) {
 				/* last resort: catch NaN, INF and out-of-band errors */
-				if (i < _outputs.noutputs &&
-				    PX4_ISFINITE(_outputs.output[i]) &&
-				    _outputs.output[i] >= -1.0f &&
-				    _outputs.output[i] <= 1.0f) {
-					/* scale for PWM output 1000 - 2000us */
-					_outputs.output[i] = 1600 + (350 * _outputs.output[i]);
+				if (i < _outputs.noutputs && PX4_ISFINITE(_outputs.output[i])
+				    && !_armed.lockdown && !_armed.manual_lockdown) {
+					/* scale for PWM output 1200 - 1900us */
+					_outputs.output[i] = (RPMMAX + RPMMIN) / 2 + ((RPMMAX - RPMMIN) / 2) * _outputs.output[i];
+					math::constrain(_outputs.output[i], (float)RPMMIN, (float)RPMMAX);
 
 				} else {
 					/*
-					 * Value is NaN, INF or out of band - set to the minimum value.
+					 * Value is NaN, INF, or we are in lockdown - stop the motor.
 					 * This will be clearly visible on the servo status and will limit the risk of accidentally
 					 * spinning motors. It would be deadly in flight.
 					 */
@@ -697,32 +711,30 @@ TAP_ESC::cycle()
 		}
 
 		const unsigned esc_count = num_outputs;
-		float motor_out[TAP_ESC_MAX_MOTOR_NUM];
+		uint16_t motor_out[TAP_ESC_MAX_MOTOR_NUM];
 
 		// We need to remap from the system default to what PX4's normal
 		// scheme is
 		if (num_outputs == 6) {
-			motor_out[0] = _outputs.output[3];
-			motor_out[1] = _outputs.output[0];
-			motor_out[2] = _outputs.output[4];
-			motor_out[3] = _outputs.output[2];
-			motor_out[4] = _outputs.output[1];
-			motor_out[5] = _outputs.output[5];
+			motor_out[0] = (uint16_t)_outputs.output[3];
+			motor_out[1] = (uint16_t)_outputs.output[0];
+			motor_out[2] = (uint16_t)_outputs.output[4];
+			motor_out[3] = (uint16_t)_outputs.output[2];
+			motor_out[4] = (uint16_t)_outputs.output[1];
+			motor_out[5] = (uint16_t)_outputs.output[5];
 			motor_out[6] = RPMSTOPPED;
 			motor_out[7] = RPMSTOPPED;
 
 		} else if (num_outputs == 4) {
-
-			motor_out[0] = _outputs.output[2];
-			motor_out[2] = _outputs.output[0];
-			motor_out[1] = _outputs.output[1];
-			motor_out[3] = _outputs.output[3];
+			motor_out[0] = (uint16_t)_outputs.output[2];
+			motor_out[2] = (uint16_t)_outputs.output[0];
+			motor_out[1] = (uint16_t)_outputs.output[1];
+			motor_out[3] = (uint16_t)_outputs.output[3];
 
 		} else {
-
 			// Use the system defaults
-			for (int i = 0; i < esc_count; ++i) {
-				motor_out[i] = _outputs.output[i];
+			for (unsigned i = 0; i < esc_count; ++i) {
+				motor_out[i] = (uint16_t)_outputs.output[i];
 			}
 		}
 
@@ -771,7 +783,6 @@ TAP_ESC::cycle()
 			}
 		}
 
-		/* do not obey the lockdown value, as lockdown is for PWMSim */
 		_is_armed = _armed.armed;
 
 	}
@@ -782,7 +793,7 @@ TAP_ESC::cycle()
 void TAP_ESC::work_stop()
 {
 	for (unsigned i = 0; i < actuator_controls_s::NUM_ACTUATOR_CONTROL_GROUPS; i++) {
-		if (_control_subs[i] > 0) {
+		if (_control_subs[i] >= 0) {
 			orb_unsubscribe(_control_subs[i]);
 			_control_subs[i] = -1;
 		}
@@ -797,15 +808,15 @@ void TAP_ESC::work_stop()
 	_initialized = false;
 }
 
-int
-TAP_ESC::control_callback(uintptr_t handle,
-			  uint8_t control_group,
-			  uint8_t control_index,
-			  float &input)
+int TAP_ESC::control_callback_trampoline(uintptr_t handle, uint8_t control_group, uint8_t control_index, float &input)
 {
-	const actuator_controls_s *controls = (actuator_controls_s *)handle;
+	TAP_ESC *obj = (TAP_ESC *)handle;
+	return obj->control_callback(control_group, control_index, input);
+}
 
-	input = controls[control_group].control[control_index];
+int TAP_ESC::control_callback(uint8_t control_group, uint8_t control_index, float &input)
+{
+	input = _controls[control_group].control[control_index];
 
 	/* limit control input */
 	if (input > 1.0f) {
@@ -861,7 +872,7 @@ TAP_ESC::ioctl(file *filp, int cmd, unsigned long arg)
 			unsigned buflen = strnlen(buf, 1024);
 
 			if (_mixers == nullptr) {
-				_mixers = new MixerGroup(control_callback, (uintptr_t)_controls);
+				_mixers = new MixerGroup(control_callback_trampoline, (uintptr_t)this);
 			}
 
 			if (_mixers == nullptr) {
@@ -1078,10 +1089,10 @@ void start()
 	_task_should_exit = false;
 
 	/* start the task */
-	_task_handle = px4_task_spawn_cmd("tap_esc_main",
+	_task_handle = px4_task_spawn_cmd("tap_esc",
 					  SCHED_DEFAULT,
-					  SCHED_PRIORITY_MAX,
-					  1000,
+					  SCHED_PRIORITY_ACTUATOR_OUTPUTS,
+					  1100,
 					  (px4_main_t)&task_main_trampoline,
 					  nullptr);
 

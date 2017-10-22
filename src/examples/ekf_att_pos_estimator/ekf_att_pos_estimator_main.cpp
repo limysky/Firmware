@@ -67,6 +67,7 @@
 #include <mathlib/mathlib.h>
 #include <mathlib/math/filter/LowPassFilter2p.hpp>
 #include <platforms/px4_defines.h>
+#include <uORB/topics/parameter_update.h>
 
 static uint64_t IMUusec = 0;
 
@@ -121,7 +122,7 @@ AttitudePositionEstimatorEKF	*g_estimator = nullptr;
 }
 
 AttitudePositionEstimatorEKF::AttitudePositionEstimatorEKF() :
-	SuperBlock(NULL, "PE"),
+	SuperBlock(nullptr, "PE"),
 	_task_should_exit(false),
 	_task_running(false),
 	_estimator_task(-1),
@@ -136,20 +137,17 @@ AttitudePositionEstimatorEKF::AttitudePositionEstimatorEKF() :
 	_vehicle_land_detected_sub(-1),
 	_params_sub(-1),
 	_manual_control_sub(-1),
-	_mission_sub(-1),
 	_home_sub(-1),
 	_armedSub(-1),
 
 	/* publications */
 	_att_pub(nullptr),
-	_ctrl_state_pub(nullptr),
 	_global_pos_pub(nullptr),
 	_local_pos_pub(nullptr),
 	_estimator_status_pub(nullptr),
 	_wind_pub(nullptr),
 
 	_att{},
-	_ctrl_state{},
 	_gyro{},
 	_accel{},
 	_mag{},
@@ -248,7 +246,7 @@ AttitudePositionEstimatorEKF::AttitudePositionEstimatorEKF() :
 	_parameter_handles.magb_pnoise = param_find("PE_MAGB_PNOISE");
 	_parameter_handles.eas_noise = param_find("PE_EAS_NOISE");
 	_parameter_handles.pos_stddev_threshold = param_find("PE_POSDEV_INIT");
-	_parameter_handles.airspeed_mode = param_find("FW_AIRSPD_MODE");
+	_parameter_handles.airspeed_disabled = param_find("FW_AIRSPD_MODE");
 
 	/* indicate consumers that the current position data is not valid */
 	_gps.eph = 10000.0f;
@@ -316,7 +314,7 @@ int AttitudePositionEstimatorEKF::parameters_update()
 	param_get(_parameter_handles.magb_pnoise, &(_parameters.magb_pnoise));
 	param_get(_parameter_handles.eas_noise, &(_parameters.eas_noise));
 	param_get(_parameter_handles.pos_stddev_threshold, &(_parameters.pos_stddev_threshold));
-	param_get(_parameter_handles.airspeed_mode, &_parameters.airspeed_mode);
+	param_get(_parameter_handles.airspeed_disabled, &_parameters.airspeed_disabled);
 
 	if (_ekf) {
 		// _ekf->yawVarScale = 1.0f;
@@ -396,7 +394,7 @@ int AttitudePositionEstimatorEKF::check_filter_state()
 
 	int check = _ekf->CheckAndBound(&ekf_report);
 
-	const char *const feedback[] = { 0,
+	const char *const feedback[] = { nullptr,
 					 "NaN in states, resetting",
 					 "stale sensor data, resetting",
 					 "got initial position lock",
@@ -715,9 +713,6 @@ void AttitudePositionEstimatorEKF::task_main()
 					// Publish attitude estimations
 					publishAttitude();
 
-					// publish control state
-					publishControlState();
-
 					// Publish Local Position estimations
 					publishLocalPosition();
 
@@ -740,7 +735,6 @@ void AttitudePositionEstimatorEKF::task_main()
 	_task_running = false;
 
 	_estimator_task = -1;
-	return;
 }
 
 void AttitudePositionEstimatorEKF::initReferencePosition(hrt_abstime timestamp,
@@ -842,95 +836,6 @@ void AttitudePositionEstimatorEKF::publishAttitude()
 	}
 }
 
-void AttitudePositionEstimatorEKF::publishControlState()
-{
-	/* Accelerations in Body Frame */
-	_ctrl_state.x_acc = _ekf->accel.x;
-	_ctrl_state.y_acc = _ekf->accel.y;
-	_ctrl_state.z_acc = _ekf->accel.z - _ekf->states[13];
-
-	_ctrl_state.horz_acc_mag = _ekf->getAccNavMagHorizontal();
-
-	/* Velocity in Body Frame */
-	Vector3f v_n(_ekf->states[4], _ekf->states[5], _ekf->states[6]);
-	Vector3f v_n_var(_ekf->P[4][4], _ekf->P[5][5], _ekf->P[6][6]);
-	Vector3f v_b = _ekf->Tnb * v_n;
-	Vector3f v_b_var = _ekf->Tnb * v_n_var;
-
-	_ctrl_state.x_vel = v_b.x;
-	_ctrl_state.y_vel = v_b.y;
-	_ctrl_state.z_vel = v_b.z;
-
-	_ctrl_state.vel_variance[0] = v_b_var.x;
-	_ctrl_state.vel_variance[1] = v_b_var.y;
-	_ctrl_state.vel_variance[2] = v_b_var.z;
-
-	/* Local Position */
-	_ctrl_state.x_pos = _ekf->states[7];
-	_ctrl_state.y_pos = _ekf->states[8];
-
-	// XXX need to announce change of Z reference somehow elegantly
-	_ctrl_state.z_pos = _ekf->states[9] - _filter_ref_offset;
-
-	_ctrl_state.pos_variance[0] = _ekf->P[7][7];
-	_ctrl_state.pos_variance[1] = _ekf->P[8][8];
-	_ctrl_state.pos_variance[2] = _ekf->P[9][9];
-
-	/* Attitude */
-	_ctrl_state.timestamp = _last_sensor_timestamp;
-	_ctrl_state.q[0] = _ekf->states[0];
-	_ctrl_state.q[1] = _ekf->states[1];
-	_ctrl_state.q[2] = _ekf->states[2];
-	_ctrl_state.q[3] = _ekf->states[3];
-
-	// use estimated velocity for airspeed estimate
-	if (_parameters.airspeed_mode == control_state_s::AIRSPD_MODE_MEAS) {
-		// use measured airspeed
-		if (PX4_ISFINITE(_airspeed.indicated_airspeed_m_s) && hrt_absolute_time() - _airspeed.timestamp < 1e6
-		    && _airspeed.timestamp > 0) {
-			_ctrl_state.airspeed = _airspeed.indicated_airspeed_m_s;
-			_ctrl_state.airspeed_valid = true;
-		}
-
-	} else if (_parameters.airspeed_mode == control_state_s::AIRSPD_MODE_EST) {
-		if (_local_pos.v_xy_valid && _local_pos.v_z_valid) {
-			_ctrl_state.airspeed = sqrtf(_ekf->states[4] * _ekf->states[4]
-				+ _ekf->states[5] * _ekf->states[5] + _ekf->states[6] * _ekf->states[6]);
-			_ctrl_state.airspeed_valid = true;
-		}
-
-	} else if (_parameters.airspeed_mode == control_state_s::AIRSPD_MODE_DISABLED) {
-		// do nothing, airspeed has been declared as non-valid above, controllers
-		// will handle this assuming always trim airspeed
-	}
-
-	/* Attitude Rates */
-	_ctrl_state.roll_rate = _LP_att_P.apply(_ekf->dAngIMU.x / _ekf->dtIMU) - _ekf->states[10] / _ekf->dtIMUfilt;
-	_ctrl_state.pitch_rate = _LP_att_Q.apply(_ekf->dAngIMU.y / _ekf->dtIMU) - _ekf->states[11] / _ekf->dtIMUfilt;
-	_ctrl_state.yaw_rate = _LP_att_R.apply(_ekf->dAngIMU.z / _ekf->dtIMU) - _ekf->states[12] / _ekf->dtIMUfilt;
-
-	/* Guard from bad data */
-	if (!PX4_ISFINITE(_ctrl_state.x_vel) ||
-	    !PX4_ISFINITE(_ctrl_state.y_vel) ||
-	    !PX4_ISFINITE(_ctrl_state.z_vel) ||
-	    !PX4_ISFINITE(_ctrl_state.x_pos) ||
-	    !PX4_ISFINITE(_ctrl_state.y_pos) ||
-	    !PX4_ISFINITE(_ctrl_state.z_pos)) {
-		// bad data, abort publication
-		return;
-	}
-
-	/* lazily publish the control state only once available */
-	if (_ctrl_state_pub != nullptr) {
-		/* publish the control state */
-		orb_publish(ORB_ID(control_state), _ctrl_state_pub, &_ctrl_state);
-
-	} else {
-		/* advertise and publish */
-		_ctrl_state_pub = orb_advertise(ORB_ID(control_state), &_ctrl_state);
-	}
-}
-
 void AttitudePositionEstimatorEKF::publishLocalPosition()
 {
 	_local_pos.timestamp = _last_sensor_timestamp;
@@ -945,11 +850,20 @@ void AttitudePositionEstimatorEKF::publishLocalPosition()
 	_local_pos.vy = _ekf->states[5];
 	_local_pos.vz = _ekf->states[6];
 
+	// this estimator does not provide a separate vertical position time derivative estimate, so use the vertical velocity
+	_local_pos.z_deriv = _ekf->states[6];
+
 	_local_pos.xy_valid = _gps_initialized && _gpsIsGood;
 	_local_pos.z_valid = true;
 	_local_pos.v_xy_valid = _gps_initialized && _gpsIsGood;
 	_local_pos.v_z_valid = true;
 	_local_pos.xy_global = _gps_initialized; //TODO: Handle optical flow mode here
+
+	// TODO provide calculated values for these
+	_local_pos.eph = 0.0f;
+	_local_pos.epv = 0.0f;
+	_local_pos.evh = 0.0f;
+	_local_pos.evv = 0.0f;
 
 	_local_pos.z_global = false;
 	matrix::Eulerf euler = matrix::Quatf(_ekf->states[0], _ekf->states[1], _ekf->states[2], _ekf->states[3]);
@@ -985,12 +899,10 @@ void AttitudePositionEstimatorEKF::publishGlobalPosition()
 		map_projection_reproject(&_pos_ref, _local_pos.x, _local_pos.y, &est_lat, &est_lon);
 		_global_pos.lat = est_lat;
 		_global_pos.lon = est_lon;
-		_global_pos.time_utc_usec = _gps.time_utc_usec;
 
 	} else {
 		_global_pos.lat = 0.0;
 		_global_pos.lon = 0.0;
-		_global_pos.time_utc_usec = 0;
 	}
 
 	if (_local_pos.v_xy_valid) {
@@ -1007,10 +919,12 @@ void AttitudePositionEstimatorEKF::publishGlobalPosition()
 
 	if (_local_pos.v_z_valid) {
 		_global_pos.vel_d = _local_pos.vz;
-
 	} else {
 		_global_pos.vel_d = 0.0f;
 	}
+
+	// this estimator does not provide a separate vertical position time derivative estimate, so use the vertical velocity
+	_global_pos.pos_d_deriv = _global_pos.vel_d;
 
 	/* terrain altitude */
 	if (_terrain_estimator->is_valid()) {
@@ -1051,6 +965,10 @@ void AttitudePositionEstimatorEKF::publishGlobalPosition()
 		return;
 	}
 
+	// TODO provide calculated values for these
+	_global_pos.evh = 0.0f;
+	_global_pos.evv = 0.0f;
+
 	/* lazily publish the global position only once available */
 	if (_global_pos_pub != nullptr) {
 		/* publish the global position */
@@ -1068,10 +986,10 @@ void AttitudePositionEstimatorEKF::publishWindEstimate()
 	_wind.windspeed_north = _ekf->states[14];
 	_wind.windspeed_east = _ekf->states[15];
 
-	// XXX we need to do something smart about the covariance here
-	// but we default to the estimate covariance for now
-	_wind.covariance_north = _ekf->P[14][14];
-	_wind.covariance_east = _ekf->P[15][15];
+	// XXX we need to do something smart about the variance here
+	// but we default to the estimated variance for now
+	_wind.variance_north = _ekf->P[14][14];
+	_wind.variance_east = _ekf->P[15][15];
 
 	/* lazily publish the wind estimate only once available */
 	if (_wind_pub != nullptr) {
@@ -1341,7 +1259,7 @@ void AttitudePositionEstimatorEKF::pollData()
 	_ekf->angRate.y = _sensor_combined.gyro_rad[1];
 	_ekf->angRate.z = _sensor_combined.gyro_rad[2];
 
-	float gyro_dt = _sensor_combined.gyro_integral_dt;
+	float gyro_dt = _sensor_combined.gyro_integral_dt / 1.e6f;
 	_ekf->dAngIMU = _ekf->angRate * gyro_dt;
 
 	perf_count(_perf_gyro);
@@ -1352,7 +1270,7 @@ void AttitudePositionEstimatorEKF::pollData()
 		_ekf->accel.y = _sensor_combined.accelerometer_m_s2[1];
 		_ekf->accel.z = _sensor_combined.accelerometer_m_s2[2];
 
-		float accel_dt = _sensor_combined.accelerometer_integral_dt;
+		float accel_dt = _sensor_combined.accelerometer_integral_dt / 1.e6f;
 		_ekf->dVelIMU = _ekf->accel * accel_dt;
 
 		_last_accel = _sensor_combined.timestamp + _sensor_combined.accelerometer_timestamp_relative;
@@ -1376,8 +1294,8 @@ void AttitudePositionEstimatorEKF::pollData()
 	// leave this in as long as larger improvements are still being made.
 #if 0
 
-	float deltaTIntegral = _sensor_combined.gyro_integral_dt;
-	float deltaTIntAcc = _sensor_combined.accelerometer_integral_dt;
+	float deltaTIntegral = _sensor_combined.gyro_integral_dt / 1.e6f;
+	float deltaTIntAcc = _sensor_combined.accelerometer_integral_dt / 1.e6f;
 
 	static unsigned dtoverflow5 = 0;
 	static unsigned dtoverflow10 = 0;
@@ -1716,7 +1634,7 @@ int ekf_att_pos_estimator_main(int argc, char *argv[])
 	}
 
 	if (!strcmp(argv[1], "debug")) {
-		int debug = strtoul(argv[2], NULL, 10);
+		int debug = strtoul(argv[2], nullptr, 10);
 		int ret = estimator::g_estimator->set_debuglevel(debug);
 
 		return ret;

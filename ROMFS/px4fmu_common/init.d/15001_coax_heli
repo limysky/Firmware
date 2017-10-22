@@ -3,7 +3,8 @@
 # @name Esky (Big) Lama v4
 #
 # @type Coaxial Helicopter
-# 
+# @class Copter
+#
 # @output MAIN1 Left swashplate servomotor, pitch axis
 # @output MAIN2 Right swashplate servomotor, roll axis
 # @output MAIN3 Upper rotor (CCW)
@@ -46,14 +47,8 @@ fi
 # use PWM parameters for throttle channel
 set PWM_OUT 34
 set PWM_RATE 400
-set PWM_DISARMED p:PWM_DISARMED
-set PWM_MIN p:PWM_MIN
-set PWM_MAX p:PWM_MAX
 
 # This is the gimbal pass mixer
 set MIXER_AUX pass
 set PWM_AUX_RATE 50
 set PWM_AUX_OUT 1234
-set PWM_AUX_DISARMED 1500
-set PWM_AUX_MIN 1000
-set PWM_AUX_MAX 2000

@@ -47,7 +47,7 @@
 #include <stdbool.h>
 #include <debug.h>
 
-#include <nuttx/spi.h>
+#include <nuttx/spi/spi.h>
 #include <arch/board/board.h>
 
 #include <up_arch.h>
@@ -70,90 +70,90 @@
 __EXPORT void stm32_spiinitialize(void)
 {
 #ifdef CONFIG_STM32_SPI1
-	px4_arch_configgpio(GPIO_SPI1_NSS);
-	px4_arch_gpiowrite(GPIO_SPI1_NSS, 1);
+	stm32_configgpio(GPIO_SPI1_NSS);
+	stm32_gpiowrite(GPIO_SPI1_NSS, 1);
 #endif
 
 #ifdef CONFIG_STM32_SPI2
-	px4_arch_configgpio(GPIO_SPI2_NSS);
-	px4_arch_gpiowrite(GPIO_SPI2_NSS, 1);
+	stm32_configgpio(GPIO_SPI2_NSS);
+	stm32_gpiowrite(GPIO_SPI2_NSS, 1);
 #endif
 
 #ifdef CONFIG_STM32_SPI3
-	px4_arch_configgpio(GPIO_SPI_CS_GYRO);
-	px4_arch_configgpio(GPIO_SPI_CS_ACCEL_MAG);
-	px4_arch_configgpio(GPIO_SPI_CS_BARO);
+	stm32_configgpio(GPIO_SPI_CS_GYRO);
+	stm32_configgpio(GPIO_SPI_CS_ACCEL_MAG);
+	stm32_configgpio(GPIO_SPI_CS_BARO);
 
 	/* De-activate all peripherals,
 	 * required for some peripheral
 	 * state machines
 	 */
-	px4_arch_gpiowrite(GPIO_SPI_CS_GYRO, 1);
-	px4_arch_gpiowrite(GPIO_SPI_CS_ACCEL_MAG, 1);
-	px4_arch_gpiowrite(GPIO_SPI_CS_BARO, 1);
+	stm32_gpiowrite(GPIO_SPI_CS_GYRO, 1);
+	stm32_gpiowrite(GPIO_SPI_CS_ACCEL_MAG, 1);
+	stm32_gpiowrite(GPIO_SPI_CS_BARO, 1);
 
-	px4_arch_configgpio(GPIO_EXTI_GYRO_DRDY);
-	px4_arch_configgpio(GPIO_EXTI_MAG_DRDY);
-	px4_arch_configgpio(GPIO_EXTI_ACCEL_DRDY);
+	stm32_configgpio(GPIO_EXTI_GYRO_DRDY);
+	stm32_configgpio(GPIO_EXTI_MAG_DRDY);
+	stm32_configgpio(GPIO_EXTI_ACCEL_DRDY);
 #endif
 
 #ifdef CONFIG_STM32_SPI4
-	px4_arch_configgpio(GPIO_SPI4_NSS);
-	px4_arch_gpiowrite(GPIO_SPI4_NSS, 1);
+	stm32_configgpio(GPIO_SPI4_NSS);
+	stm32_gpiowrite(GPIO_SPI4_NSS, 1);
 #endif
 }
 
 #ifdef CONFIG_STM32_SPI1
-__EXPORT void stm32_spi1select(FAR struct spi_dev_s *dev, enum spi_dev_e devid, bool selected)
+__EXPORT void stm32_spi1select(FAR struct spi_dev_s *dev, uint32_t devid, bool selected)
 {
 	/* there is only one device broken-out so select it */
-	px4_arch_gpiowrite(GPIO_SPI1_NSS, !selected);
+	stm32_gpiowrite(GPIO_SPI1_NSS, !selected);
 }
 
-__EXPORT uint8_t stm32_spi1status(FAR struct spi_dev_s *dev, enum spi_dev_e devid)
+__EXPORT uint8_t stm32_spi1status(FAR struct spi_dev_s *dev, uint32_t devid)
 {
 	return SPI_STATUS_PRESENT;
 }
 #endif
 
 #ifdef CONFIG_STM32_SPI2
-__EXPORT void stm32_spi2select(FAR struct spi_dev_s *dev, enum spi_dev_e devid, bool selected)
+__EXPORT void stm32_spi2select(FAR struct spi_dev_s *dev, uint32_t devid, bool selected)
 {
 	/* there is only one device broken-out so select it */
-	px4_arch_gpiowrite(GPIO_SPI2_NSS, !selected);
+	stm32_gpiowrite(GPIO_SPI2_NSS, !selected);
 }
 
-__EXPORT uint8_t stm32_spi2status(FAR struct spi_dev_s *dev, enum spi_dev_e devid)
+__EXPORT uint8_t stm32_spi2status(FAR struct spi_dev_s *dev, uint32_t devid)
 {
 	return SPI_STATUS_PRESENT;
 }
 #endif
 
 #ifdef CONFIG_STM32_SPI3
-__EXPORT void stm32_spi3select(FAR struct spi_dev_s *dev, enum spi_dev_e devid, bool selected)
+__EXPORT void stm32_spi3select(FAR struct spi_dev_s *dev, uint32_t devid, bool selected)
 {
 	/* SPI select is active low, so write !selected to select the device */
 
 	switch (devid) {
 	case PX4_SPIDEV_GYRO:
 		/* Making sure the other peripherals are not selected */
-		px4_arch_gpiowrite(GPIO_SPI_CS_GYRO, !selected);
-		px4_arch_gpiowrite(GPIO_SPI_CS_ACCEL_MAG, 1);
-		px4_arch_gpiowrite(GPIO_SPI_CS_BARO, 1);
+		stm32_gpiowrite(GPIO_SPI_CS_GYRO, !selected);
+		stm32_gpiowrite(GPIO_SPI_CS_ACCEL_MAG, 1);
+		stm32_gpiowrite(GPIO_SPI_CS_BARO, 1);
 		break;
 
 	case PX4_SPIDEV_ACCEL_MAG:
 		/* Making sure the other peripherals are not selected */
-		px4_arch_gpiowrite(GPIO_SPI_CS_GYRO, 1);
-		px4_arch_gpiowrite(GPIO_SPI_CS_ACCEL_MAG, !selected);
-		px4_arch_gpiowrite(GPIO_SPI_CS_BARO, 1);
+		stm32_gpiowrite(GPIO_SPI_CS_GYRO, 1);
+		stm32_gpiowrite(GPIO_SPI_CS_ACCEL_MAG, !selected);
+		stm32_gpiowrite(GPIO_SPI_CS_BARO, 1);
 		break;
 
 	case PX4_SPIDEV_BARO:
 		/* Making sure the other peripherals are not selected */
-		px4_arch_gpiowrite(GPIO_SPI_CS_GYRO, 1);
-		px4_arch_gpiowrite(GPIO_SPI_CS_ACCEL_MAG, 1);
-		px4_arch_gpiowrite(GPIO_SPI_CS_BARO, !selected);
+		stm32_gpiowrite(GPIO_SPI_CS_GYRO, 1);
+		stm32_gpiowrite(GPIO_SPI_CS_ACCEL_MAG, 1);
+		stm32_gpiowrite(GPIO_SPI_CS_BARO, !selected);
 		break;
 
 	default:
@@ -161,7 +161,7 @@ __EXPORT void stm32_spi3select(FAR struct spi_dev_s *dev, enum spi_dev_e devid, 
 	}
 }
 
-__EXPORT uint8_t stm32_spi3status(FAR struct spi_dev_s *dev, enum spi_dev_e devid)
+__EXPORT uint8_t stm32_spi3status(FAR struct spi_dev_s *dev, uint32_t devid)
 {
 	return SPI_STATUS_PRESENT;
 }
@@ -169,13 +169,13 @@ __EXPORT uint8_t stm32_spi3status(FAR struct spi_dev_s *dev, enum spi_dev_e devi
 
 
 #ifdef CONFIG_STM32_SPI4
-__EXPORT void stm32_spi4select(FAR struct spi_dev_s *dev, enum spi_dev_e devid, bool selected)
+__EXPORT void stm32_spi4select(FAR struct spi_dev_s *dev, uint32_t devid, bool selected)
 {
 	/* there can only be one device on this bus, so always select it */
-	px4_arch_gpiowrite(GPIO_SPI4_NSS, !selected);
+	stm32_gpiowrite(GPIO_SPI4_NSS, !selected);
 }
 
-__EXPORT uint8_t stm32_spi4status(FAR struct spi_dev_s *dev, enum spi_dev_e devid)
+__EXPORT uint8_t stm32_spi4status(FAR struct spi_dev_s *dev, uint32_t devid)
 {
 	/* FRAM is always present */
 	return SPI_STATUS_PRESENT;

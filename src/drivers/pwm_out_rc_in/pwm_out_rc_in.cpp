@@ -55,7 +55,6 @@
 #include <v1.0/mavlink_types.h>
 #include <v1.0/common/mavlink.h>
 
-
 /*
  * This driver is supposed to run on Snapdragon. It sends actuator_controls (PWM)
  * to a Pixhawk/Pixfalcon/Pixracer over UART (mavlink) and receives RC input.
@@ -301,7 +300,7 @@ void serial_callback(void *context, char *buffer, size_t num_bytes)
 	if (num_bytes > 0) {
 		mavlink_message_t msg;
 
-		for (int i = 0; i < num_bytes; ++i) {
+		for (size_t i = 0; i < num_bytes; ++i) {
 			// The MAVLink app doesn't use the internal buffer functions
 			// and hence the first port can be used here.
 			if (mavlink_parse_char(MAVLINK_COMM_0, buffer[i], &msg, &serial_status)) {
@@ -415,7 +414,7 @@ void task_main(int argc, char *argv[])
 			_outputs.timestamp = _controls.timestamp;
 
 			/* do mixing */
-			_outputs.noutputs = _mixer->mix(_outputs.output, 0 /* not used */, NULL);
+			_outputs.noutputs = _mixer->mix(_outputs.output, 0);
 
 			/* disable unused ports by setting their output to NaN */
 			for (size_t i = _outputs.noutputs; i < sizeof(_outputs.output) / sizeof(_outputs.output[0]); i++) {
@@ -426,11 +425,13 @@ void task_main(int argc, char *argv[])
 			uint16_t disarmed_pwm[4];
 			uint16_t min_pwm[4];
 			uint16_t max_pwm[4];
+			uint16_t trim_pwm[4];
 
 			for (unsigned int i = 0; i < 4; i++) {
 				disarmed_pwm[i] = _pwm_disarmed;
 				min_pwm[i] = _pwm_min;
 				max_pwm[i] = _pwm_max;
+				trim_pwm[i] = 0;
 			}
 
 			uint16_t pwm[4];

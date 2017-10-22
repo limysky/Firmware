@@ -128,7 +128,6 @@ private:
 
 	perf_counter_t		_sample_perf;
 	perf_counter_t		_comms_errors;
-	perf_counter_t		_buffer_overflows;
 
 	uint8_t				_cycle_counter;	/* counter in cycle to change i2c adresses */
 	int					_cycling_rate;	/* */
@@ -224,7 +223,6 @@ HC_SR04::HC_SR04(unsigned sonars) :
 	_distance_sensor_topic(nullptr),
 	_sample_perf(perf_alloc(PC_ELAPSED, "hc_sr04_read")),
 	_comms_errors(perf_alloc(PC_COUNT, "hc_sr04_comms_errors")),
-	_buffer_overflows(perf_alloc(PC_COUNT, "hc_sr04_buffer_overflows")),
 	_cycle_counter(0),	/* initialising counter for cycling function to zero */
 	_cycling_rate(0),	/* initialising cycling rate (which can differ depending on one sonar or multiple) */
 	_index_counter(0), 	/* initialising temp sonar i2c address to zero */
@@ -258,7 +256,6 @@ HC_SR04::~HC_SR04()
 	/* free perf counters */
 	perf_free(_sample_perf);
 	perf_free(_comms_errors);
-	perf_free(_buffer_overflows);
 }
 
 int
@@ -545,7 +542,7 @@ HC_SR04::measure()
 	usleep(10);  // 10us
 	px4_arch_gpiowrite(_gpio_tab[_cycle_counter].trig_port, false);
 
-	stm32_gpiosetevent(_gpio_tab[_cycle_counter].echo_port, true, true, false, sonar_isr);
+	px4_arch_gpiosetevent(_gpio_tab[_cycle_counter].echo_port, true, true, false, sonar_isr);
 	_status = 0;
 	ret = OK;
 
@@ -562,7 +559,7 @@ HC_SR04::collect()
 	/* read from the sensor */
 	if (_status != 2) {
 		DEVICE_DEBUG("erro sonar %d ,status=%d", _cycle_counter, _status);
-		stm32_gpiosetevent(_gpio_tab[_cycle_counter].echo_port, true, true, false, nullptr);
+		px4_arch_gpiosetevent(_gpio_tab[_cycle_counter].echo_port, true, true, false, nullptr);
 		perf_end(_sample_perf);
 		return (ret);
 	}
@@ -620,16 +617,14 @@ HC_SR04::collect()
 		orb_publish(ORB_ID(distance_sensor), _distance_sensor_topic, &report);
 	}
 
-	if (_reports->force(&report)) {
-		perf_count(_buffer_overflows);
-	}
+	_reports->force(&report);
 
 	/* notify anyone waiting for data */
 	poll_notify(POLLIN);
 
 	ret = OK;
 
-	stm32_gpiosetevent(_gpio_tab[_cycle_counter].echo_port, true, true, false, nullptr); /* close interrupt */
+	px4_arch_gpiosetevent(_gpio_tab[_cycle_counter].echo_port, true, true, false, nullptr); /* close interrupt */
 	perf_end(_sample_perf);
 #endif
 	return ret;
@@ -723,7 +718,6 @@ HC_SR04::print_info()
 {
 	perf_print_counter(_sample_perf);
 	perf_print_counter(_comms_errors);
-	perf_print_counter(_buffer_overflows);
 	printf("poll interval:  %u ticks\n", _measure_ticks);
 	_reports->print_info("report queue");
 }

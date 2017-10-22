@@ -38,13 +38,15 @@
  * @author Mark Charlebois <charlebm@gmail.com>
  */
 
+#pragma once
+
 #include <px4_tasks.h>
 #include <drivers/drv_device.h>
 #include "device.h"
 #include <unistd.h>
 #include <stdio.h>
 
-class VFile : public device::VDev
+class VFile : public device::CDev
 {
 public:
 

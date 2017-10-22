@@ -201,7 +201,7 @@ extern "C" { __EXPORT int l3gd20_main(int argc, char *argv[]); }
 class L3GD20 : public device::SPI
 {
 public:
-	L3GD20(int bus, const char *path, spi_dev_e device, enum Rotation rotation);
+	L3GD20(int bus, const char *path, uint32_t device, enum Rotation rotation);
 	virtual ~L3GD20();
 
 	virtual int		init();
@@ -405,7 +405,7 @@ const uint8_t L3GD20::_checked_registers[L3GD20_NUM_CHECKED_REGISTERS] = { ADDR_
 									   ADDR_LOW_ODR
 									 };
 
-L3GD20::L3GD20(int bus, const char *path, spi_dev_e device, enum Rotation rotation) :
+L3GD20::L3GD20(int bus, const char *path, uint32_t device, enum Rotation rotation) :
 	SPI("L3GD20", path, bus, device, SPIDEV_MODE3,
 	    11 * 1000 * 1000 /* will be rounded to 10.4 MHz, within margins for L3GD20 */),
 	_call{},
@@ -433,9 +433,6 @@ L3GD20::L3GD20(int bus, const char *path, spi_dev_e device, enum Rotation rotati
 	_rotation(rotation),
 	_checked_next(0)
 {
-	// enable debug() calls
-	_debug_enabled = true;
-
 	_device_id.devid_s.devtype = DRV_GYR_DEVTYPE_L3GD20;
 
 	// default scale factors
@@ -1075,6 +1072,9 @@ L3GD20::measure()
 	report.scaling = _gyro_range_scale;
 	report.range_rad_s = _gyro_range_rad_s;
 
+	/* return device ID */
+	report.device_id = _device_id.devid;
+
 	_reports->force(&report);
 
 	if (gyro_notify) {
@@ -1144,8 +1144,8 @@ L3GD20::test_error()
 int
 L3GD20::self_test()
 {
-	/* evaluate gyro offsets, complain if offset -> zero or larger than 25 dps */
-	if (fabsf(_gyro_scale.x_offset) > L3GD20_MAX_OFFSET || fabsf(_gyro_scale.x_offset) < 0.000001f) {
+	/* evaluate gyro offsets, complain if offset larger than 25 dps */
+	if (fabsf(_gyro_scale.x_offset) > L3GD20_MAX_OFFSET) {
 		return 1;
 	}
 
@@ -1153,7 +1153,7 @@ L3GD20::self_test()
 		return 1;
 	}
 
-	if (fabsf(_gyro_scale.y_offset) > L3GD20_MAX_OFFSET || fabsf(_gyro_scale.y_offset) < 0.000001f) {
+	if (fabsf(_gyro_scale.y_offset) > L3GD20_MAX_OFFSET) {
 		return 1;
 	}
 
@@ -1161,7 +1161,7 @@ L3GD20::self_test()
 		return 1;
 	}
 
-	if (fabsf(_gyro_scale.z_offset) > L3GD20_MAX_OFFSET || fabsf(_gyro_scale.z_offset) < 0.000001f) {
+	if (fabsf(_gyro_scale.z_offset) > L3GD20_MAX_OFFSET) {
 		return 1;
 	}
 
@@ -1206,13 +1206,13 @@ start(bool external_bus, enum Rotation rotation)
 	/* create the driver */
 	if (external_bus) {
 #if defined(PX4_SPI_BUS_EXT) && defined(PX4_SPIDEV_EXT_GYRO)
-		g_dev = new L3GD20(PX4_SPI_BUS_EXT, L3GD20_DEVICE_PATH, (spi_dev_e)PX4_SPIDEV_EXT_GYRO, rotation);
+		g_dev = new L3GD20(PX4_SPI_BUS_EXT, L3GD20_DEVICE_PATH, PX4_SPIDEV_EXT_GYRO, rotation);
 #else
 		errx(0, "External SPI not available");
 #endif
 
 	} else {
-		g_dev = new L3GD20(PX4_SPI_BUS_SENSORS, L3GD20_DEVICE_PATH, (spi_dev_e)PX4_SPIDEV_GYRO, rotation);
+		g_dev = new L3GD20(PX4_SPI_BUS_SENSORS, L3GD20_DEVICE_PATH, PX4_SPIDEV_GYRO, rotation);
 	}
 
 	if (g_dev == nullptr) {

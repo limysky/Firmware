@@ -33,11 +33,9 @@
 px4_add_module(
 	MODULE drivers__boards__px4-stm32f4discovery
 	SRCS
-		../common/board_name.c
 		px4discovery_init.c
 		px4discovery_usb.c
 		px4discovery_led.c
 	DEPENDS
 		platforms__common
 	)
-# vim: set noet ft=cmake fenc=utf-8 ff=unix : 

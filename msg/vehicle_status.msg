@@ -48,12 +48,12 @@ uint8 hil_state				# current hil state
 bool failsafe				# true if system is in failsafe state
 
 uint8 system_type			# system type, contains mavlink MAV_TYPE
-uint32 system_id			# system id, contains MAVLink's system ID field
-uint32 component_id			# subsystem / component id, contains MAVLink's component ID field
+uint8 system_id			# system id, contains MAVLink's system ID field
+uint8 component_id			# subsystem / component id, contains MAVLink's component ID field
 
 bool is_rotary_wing			# True if system is in rotary wing configuration, so for a VTOL this is only true while flying as a multicopter
 bool is_vtol				# True if the system is VTOL capable
-bool vtol_fw_permanent_stab		# True if vtol should stabilize attitude for fw in manual mode
+bool vtol_fw_permanent_stab		# True if VTOL should stabilize attitude for fw in manual mode
 bool in_transition_mode			# True if VTOL is doing a transition
 bool in_transition_to_fw		# True if VTOL is doing a transition from MC to FW
 

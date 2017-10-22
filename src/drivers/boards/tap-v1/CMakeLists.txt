@@ -33,12 +33,9 @@
 ############################################################################
 px4_add_module(
 	MODULE drivers__boards__tap-v1
-	COMPILE_FLAGS
 	SRCS
-		../common/board_name.c
 		tap_init.c
 		tap_pwr.c
-		tap_i2c.cpp
 		tap_sdio.c
 		tap_timer_config.c
 		tap_spi.c
@@ -47,4 +44,3 @@ px4_add_module(
 	DEPENDS
 		platforms__common
 	)
-# vim: set noet ft=cmake fenc=utf-8 ff=unix :

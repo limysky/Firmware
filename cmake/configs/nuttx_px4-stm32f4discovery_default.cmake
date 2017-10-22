@@ -1,6 +1,6 @@
 include(nuttx/px4_impl_nuttx)
 
-set(CMAKE_TOOLCHAIN_FILE ${PX4_SOURCE_DIR}/cmake/toolchains/Toolchain-arm-none-eabi.cmake)
+px4_nuttx_configure(HWCLASS m4 CONFIG nsh ROMFS y ROMFSROOT px4fmu_common)
 
 set(config_module_list
 	#
@@ -9,7 +9,7 @@ set(config_module_list
 	drivers/device
 	drivers/stm32
 	drivers/led
-	drivers/boards/px4-stm32f4discovery
+	drivers/boards
 
 	#
 	# System commands
@@ -27,7 +27,7 @@ set(config_module_list
 	#
 	# Library modules
 	#
-	modules/param
+	modules/systemlib/param
 	modules/systemlib
 	modules/systemlib/mixer
 	modules/uORB
@@ -43,6 +43,7 @@ set(config_module_list
 	lib/external_lgpl
 	lib/geo
 	lib/conversion
+	lib/version
 	lib/DriverFramework/framework
 	platforms/nuttx
 
@@ -73,20 +74,3 @@ set(config_module_list
 	# Hardware test
 	#examples/hwtest
 )
-
-set(config_extra_builtin_cmds
-	serdis
-	sercon
-	)
-
-add_custom_target(sercon)
-set_target_properties(sercon PROPERTIES
-	PRIORITY "SCHED_PRIORITY_DEFAULT"
-	MAIN "sercon"
-	STACK_MAIN "2048")
-
-add_custom_target(serdis)
-set_target_properties(serdis PROPERTIES
-	PRIORITY "SCHED_PRIORITY_DEFAULT"
-	MAIN "serdis"
-	STACK_MAIN "2048")

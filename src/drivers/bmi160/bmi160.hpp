@@ -223,7 +223,7 @@
 #define BMI_GYRO_NORMAL_MODE    0x15 //Wait at least 80 ms before another CMD
 #define BMI160_SOFT_RESET       0xB6
 
-#define BMI160_ACCEL_DEFAULT_RANGE_G		4
+#define BMI160_ACCEL_DEFAULT_RANGE_G		16
 #define BMI160_GYRO_DEFAULT_RANGE_DPS		2000
 #define BMI160_ACCEL_DEFAULT_RATE           800
 #define BMI160_ACCEL_MAX_RATE               1600
@@ -256,7 +256,7 @@ class BMI160_gyro;
 class BMI160 : public device::SPI
 {
 public:
-	BMI160(int bus, const char *path_accel, const char *path_gyro, spi_dev_e device, enum Rotation rotation);
+	BMI160(int bus, const char *path_accel, const char *path_gyro, uint32_t device, enum Rotation rotation);
 	virtual ~BMI160();
 
 	virtual int		init();

@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (C) 2013 PX4 Development Team. All rights reserved.
+ *   Copyright (C) 2013, 2016 PX4 Development Team. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -106,14 +106,6 @@
 
 #include <board_config.h>
 #include <drivers/drv_hrt.h>
-
-#include <arch/stm32/chip.h>
-#include <up_internal.h>
-#include <up_arch.h>
-
-#include <stm32.h>
-#include <stm32_gpio.h>
-#include <stm32_tim.h>
 
 #include <systemlib/err.h>
 #include <systemlib/circuit_breaker.h>
@@ -304,7 +296,7 @@ class ToneAlarm : public device::CDev
 {
 public:
 	ToneAlarm();
-	~ToneAlarm();
+	~ToneAlarm() = default;
 
 	virtual int		init();
 
@@ -410,10 +402,8 @@ ToneAlarm::ToneAlarm() :
 	_user_tune(nullptr),
 	_tune(nullptr),
 	_next(nullptr),
-	_cbrk(CBRK_UNINIT)
+	_cbrk(CBRK_OFF)
 {
-	// enable debug() calls
-	//_debug_enabled = true;
 	_default_tunes[TONE_STARTUP_TUNE] = "MFT240L8 O4aO5dc O4aO5dc O4aO5dc L16dcdcdcdc";		// startup tune
 	_default_tunes[TONE_ERROR_TUNE] = "MBT200a8a8a8PaaaP";						// ERROR tone
 	_default_tunes[TONE_NOTIFY_POSITIVE_TUNE] = "MFT200e8a8a";					// Notify Positive tone
@@ -445,10 +435,6 @@ ToneAlarm::ToneAlarm() :
 	_tune_names[TONE_BARO_WARNING_TUNE] = "baro_warning";			// baro warning
 	_tune_names[TONE_SINGLE_BEEP_TUNE] = "beep";                    // single beep
 	_tune_names[TONE_HOME_SET] = "home_set";
-}
-
-ToneAlarm::~ToneAlarm()
-{
 }
 
 int
@@ -830,7 +816,7 @@ ToneAlarm::next_note()
 
 	// tune looks bad (unexpected EOF, bad character, etc.)
 tune_error:
-	lowsyslog("tune error\n");
+	syslog(LOG_ERR, "tune error\n");
 	_repeat = false;		// don't loop on error
 
 	// stop (and potentially restart) the tune
@@ -903,14 +889,14 @@ ToneAlarm::ioctl(file *filp, int cmd, unsigned long arg)
 {
 	int result = OK;
 
-	DEVICE_DEBUG("ioctl %i %u", cmd, arg);
+	DEVICE_DEBUG("ioctl %i %lu", cmd, arg);
 
 //	irqstate_t flags = px4_enter_critical_section();
 
 	/* decide whether to increase the alarm level to cmd or leave it alone */
 	switch (cmd) {
 	case TONE_SET_ALARM:
-		DEVICE_DEBUG("TONE_SET_ALARM %u", arg);
+		DEVICE_DEBUG("TONE_SET_ALARM %lu", arg);
 
 		if (arg < TONE_NUMBER_OF_TUNES) {
 			if (arg == TONE_STOP_TUNE) {
